@@ -18,20 +18,38 @@ jobs:
       - name: 获取 cfnew 最新发布
         id: get_latest
         run: |
-          # 获取最新 release 信息
+          # 获取最新 release 信息（带 token 鉴权，最多重试 3 次）
           echo "正在获取最新发布信息..."
-          LATEST_RELEASE=$(curl -s https://api.github.com/repos/byJoey/cfnew/releases/latest)
-          
-          # 使用 sed 提取版本号（兼容性更好）
-          VERSION=$(echo "$LATEST_RELEASE" | sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p')
+          LATEST_RELEASE=""
+          VERSION=""
+          ASSETS_URL=""
+          for i in 1 2 3; do
+            LATEST_RELEASE=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github+json" https://api.github.com/repos/byJoey/cfnew/releases/latest)
+            # 使用 sed 提取版本号（兼容性更好）
+            VERSION=$(echo "$LATEST_RELEASE" | sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p')
+            # 获取所有 assets 文件
+            ASSETS_URL=$(echo "$LATEST_RELEASE" | sed -n 's/.*"assets_url": "\([^"]*\)".*/\1/p')
+            if [ -n "$VERSION" ] && [ -n "$ASSETS_URL" ]; then
+              break
+            fi
+            echo "第 $i 次获取失败。"
+            if [ "$i" -lt 3 ]; then
+              echo "15 秒后重试..."
+              sleep 15
+            fi
+          done
+          if [ -z "$VERSION" ] || [ -z "$ASSETS_URL" ]; then
+            echo "错误：重试 3 次后仍未获取到 cfnew 最新发布信息（版本号或 assets 地址为空）"
+            echo "API 原始返回："
+            echo "$LATEST_RELEASE"
+            exit 1
+          fi
           
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "最新版本: $VERSION"
           
-          # 获取所有 assets 文件
-          ASSETS_URL=$(echo "$LATEST_RELEASE" | sed -n 's/.*"assets_url": "\([^"]*\)".*/\1/p')
           echo "正在获取文件列表..."
-          ASSETS=$(curl -s "$ASSETS_URL")
+          ASSETS=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github+json" "$ASSETS_URL")
           
           # 查找 Pages.zip 文件
           # 使用更可靠的方法查找包含 Pages.zip 的下载 URL
@@ -171,4 +189,3 @@ jobs:
           else
             echo "- 状态: ⏭️ 版本相同，无需更新" >> $GITHUB_STEP_SUMMARY
           fi
-
